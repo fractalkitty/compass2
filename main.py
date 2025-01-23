@@ -9,15 +9,15 @@ circleMode = True
 lineMode = False
 
 class Line:
-    def __init__(self, start_circles, start_point, end_circles, end_point):
-        self.start_circles = start_circles  
-        self.end_circles = end_circles
+    def __init__(self, start_intersection, start_point, end_intersection, end_point):
+        self.start_parents = start_intersection  # Fix attribute name
+        self.end_parents = end_intersection
         self.original_start = start_point
         self.original_end = end_point
         
-    def get_points(self):  # Renamed from get_current_points for consistency
-        start_points = find_intersections(self.start_circles[0], self.start_circles[1])
-        end_points = find_intersections(self.end_circles[0], self.end_circles[1])
+    def get_points(self):
+        start_points = find_intersections(self.start_parents[0], self.start_parents[1])
+        end_points = find_intersections(self.end_parents[0], self.end_parents[1])
         
         if not start_points or not end_points:
             return None
@@ -68,7 +68,7 @@ class DraggableCircle:
         return ((self.x - point[0])**2 + (self.y - point[1])**2)**0.5
 
     def snap_to_closest_circle_edge(self, circles):
-        SNAP_RADIUS = 30
+        SNAP_RADIUS = 20
         if not pygame.key.get_pressed()[pygame.K_LSHIFT]:
             return
             
@@ -96,27 +96,22 @@ class DraggableCircle:
                     return
                     
     def snap_to_intersection_points(self, circles):
-        SNAP_RADIUS = 30
-        keys = pygame.key.get_pressed()
-        if not keys[pygame.K_LSHIFT] and not keys[pygame.K_RSHIFT]:
+        SNAP_RADIUS = 15
+        SNAP_TOLERANCE = 1e-10  # Add tolerance for floating point comparison
+        
+        if not pygame.key.get_pressed()[pygame.K_LSHIFT]:
             return
             
-        # Get current mouse position for relative movement
         mouse_x, mouse_y = pygame.mouse.get_pos()
+        intersections = find_all_intersections(circles, lines)
         
-        # Check all intersection points
-        for i in range(len(circles)):
-            for j in range(i+1, len(circles)):
-                if circles[i] != self and circles[j] != self:
-                    points = find_intersections(circles[i], circles[j])
-                    for point in points:
-                        # Calculate offset to maintain relative movement
-                        if self.distance_to_point(point) < SNAP_RADIUS:
-                            offset_x = mouse_x - point[0]
-                            offset_y = mouse_y - point[1]
-                            self.x = mouse_x - offset_x
-                            self.y = mouse_y - offset_y
-                            return           
+        for intersection in intersections:
+            dist = ((intersection.point[0] - self.x)**2 + (intersection.point[1] - self.y)**2)**0.5
+            if dist < SNAP_RADIUS:
+                # Snap directly to point without offset calculation
+                self.x = intersection.point[0]
+                self.y = intersection.point[1]
+                return         
     def draw(self):
         if self.selected:
             pygame.draw.circle(screen, (155, 100, 100), 
@@ -155,12 +150,14 @@ class DraggableCircle:
 
 
 def find_intersections(circle1, circle2):
+    EPSILON = 1e-10
     dx = circle2.x - circle1.x
     dy = circle2.y - circle1.y
     d = (dx**2 + dy**2)**0.5
     r1 = circle1.radius * circle1.scale
     r2 = circle2.radius * circle2.scale
-    
+    if abs(d) < EPSILON:  # Check near-zero with tolerance
+        return []
     if d == 0:
         return []
     if d > r1 + r2 or d < abs(r1 - r2):
@@ -179,6 +176,30 @@ def find_intersections(circle1, circle2):
     
     return [(ix1, iy1), (ix2, iy2)]
 
+def line_line_intersection(line1, line2):
+    p1 = line1.get_points()
+    p2 = line2.get_points()
+    if not p1 or not p2:
+        return None
+    
+    x1, y1 = p1[0]
+    x2, y2 = p1[1]
+    x3, y3 = p2[0]
+    x4, y4 = p2[1]
+    
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(denom) < 1e-10:  # Check for near-zero denominator
+        return None
+        
+    t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+    u = -((x1 - x2) * (y1 - y3) - (y1 - y2) * (x1 - x3)) / denom
+    
+    if 0 <= t <= 1 and 0 <= u <= 1:
+        x = x1 + t * (x2 - x1)
+        y = y1 + t * (y2 - y1)
+        return (x, y)
+    return None
+
 def find_circle_pair_for_point(pos, circles):
     for i in range(len(circles)):
         for j in range(i+1, len(circles)):
@@ -187,6 +208,37 @@ def find_circle_pair_for_point(pos, circles):
                 if ((point[0] - pos[0])**2 + (point[1] - pos[1])**2) < 100:
                     return ((circles[i], circles[j]), point)
     return None
+class Intersection:
+    def __init__(self, point, parents):
+        self.point = point  # (x,y)
+        self.parents = parents  # List of parent objects (circles/lines)
+    
+    def draw(self, is_selected=False):
+        color = (255, 0, 0) if is_selected else (0, 0, 0)
+        pygame.draw.circle(screen, color, (int(self.point[0]), int(self.point[1])), 3)
+        if is_selected:
+            pygame.draw.circle(screen, (255, 255, 255), (int(self.point[0]), int(self.point[1])), 2)
+
+def find_all_intersections(circles, lines):
+    intersections = []
+    
+    # Circle-Circle intersections
+    for i in range(len(circles)):
+        for j in range(i+1, len(circles)):
+            points = find_intersections(circles[i], circles[j])
+            for point in points:
+                intersections.append(Intersection(point, [circles[i], circles[j]]))
+                
+    # Line-Line intersections
+    for i in range(len(lines)):
+        for j in range(i+1, len(lines)):
+            point = line_line_intersection(lines[i], lines[j])
+            # print(f"Line intersection: {point}")  # Debug
+            if point:
+                intersections.append(Intersection(point, [lines[i], lines[j]]))
+    
+    # print(f"Total intersections: {len(intersections)}")  # Debug
+    return intersections
 
 circles = [DraggableCircle(400, 300, defaultRadius),DraggableCircle(450, 350, defaultRadius)]
 lines = []
@@ -214,32 +266,36 @@ while running:
                 continue
                 
             if lineMode:
-                result = find_circle_pair_for_point(event.pos, circles)
-                if result:
-                    circle_pair, clicked_point = result
+                intersections = find_all_intersections(circles, lines)
+                clicked_intersection = None
+                for intersection in intersections:
+                    if ((intersection.point[0] - event.pos[0])**2 + 
+                        (intersection.point[1] - event.pos[1])**2) < 100:
+                        clicked_intersection = intersection
+                        break
+                        
+                if clicked_intersection:
                     if selected_point_circles is None:
-                        selected_point_circles = (circle_pair, clicked_point)
-                        for i in range(len(circles)):
-                            for j in range(i+1, len(circles)):
-                                points = find_intersections(circles[i], circles[j])
-                                for point in points:
-                                    if point == clicked_point:
-                                        pygame.draw.circle(screen, (255,0,0), 
-                                                         (int(point[0]), int(point[1])), 5)
+                        selected_point_circles = clicked_intersection
                     else:
-                        start_circles, start_point = selected_point_circles
-                        lines.append(Line(start_circles, start_point, circle_pair, clicked_point))
+                        start_intersection = selected_point_circles
+                        lines.append(Line(start_intersection.parents, start_intersection.point,
+                                        clicked_intersection.parents, clicked_intersection.point))
                         selected_point_circles = None
             
         if event.type == pygame.KEYDOWN:
             if event.key == pygame.K_d:
                 circles = [c for c in circles if not c.selected]
-                # Remove any lines connected to deleted circles
-                lines = [line for line in lines if all(c in circles for c in line.circles1 + line.circles2)]
+                lines = [line for line in lines if all(c in circles for c in 
+                        [p for p in line.start_parents + line.end_parents if isinstance(p, DraggableCircle)])]
+
             elif event.key == pygame.K_n and circleMode:
                 mouse_x, mouse_y = pygame.mouse.get_pos()
                 circles.append(DraggableCircle(mouse_x, mouse_y, defaultRadius))
-                
+            elif event.key == pygame.K_c :
+                lines = []
+                circles = []
+                intersections = []   
         if circleMode:
             for circle in circles:
                 circle.handle_event(event)
@@ -266,7 +322,10 @@ while running:
     
     for line in lines:
         line.draw()
-        
+    intersections = find_all_intersections(circles, lines)
+    for intersection in intersections:
+        intersection.draw(is_selected=(intersection == selected_point_circles))
+           
     for i in range(len(circles)):
         for j in range(i+1, len(circles)):
             points = find_intersections(circles[i], circles[j])
@@ -276,9 +335,8 @@ while running:
                 color = (255, 0, 0) if is_selected else (0, 0, 0)
                 pygame.draw.circle(screen, color, (int(point[0]), int(point[1])), 3)
     if selected_point_circles:
-        saved_circles, saved_point = selected_point_circles
-        pygame.draw.circle(screen, (255, 0, 0), (int(saved_point[0]), int(saved_point[1])), 5)
-        pygame.draw.circle(screen, (255, 255, 255), (int(saved_point[0]), int(saved_point[1])), 2)            
+        selected_point_circles.draw(is_selected=True)
+        
     pygame.display.flip()
 
 pygame.quit()
