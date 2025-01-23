@@ -121,14 +121,14 @@ class DraggableCircle:
         if self.selected:
             pygame.draw.circle(screen, (155, 100, 100), 
                          (int(self.x), int(self.y)), 
-                         int(self.radius * self.scale),2)
+                         int(self.radius * self.scale),3)
             pygame.draw.circle(screen, (255, 200, 200), 
                          (int(self.x), int(self.y)), 
                          3,2)
         else:
             pygame.draw.circle(screen, (50, 125, 155), 
                             (int(self.x), int(self.y)), 
-                            int(self.radius * self.scale),2)
+                            int(self.radius * self.scale),3)
         
     def handle_event(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN:
